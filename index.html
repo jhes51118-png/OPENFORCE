@@ -68,6 +68,7 @@
         const IconTable = () => <i data-lucide="table" className="w-4 h-4 mr-2"></i>;
         const IconSettings = () => <i data-lucide="settings" className="w-4 h-4 mr-2"></i>;
         const IconCompass = () => <i data-lucide="compass" className="w-4 h-4 mr-2"></i>;
+        const IconCalculator = () => <i data-lucide="calculator" className="w-4 h-4 mr-2"></i>;
         
         // 獨立的單一圖表元件 (新增 onRangeChange 參數)
         const SingleChart = ({ title, datasets, xMax, xMin, yLabel = "荷重 (Force)", onRangeChange }) => {
@@ -162,10 +163,17 @@
         function App() {
             const [baseAngle, setBaseAngle] = useState(5.0);
             
-            // 新增抗加速度參數
-            const [lcdWeight, setLcdWeight] = useState("");
-            const [axisToTop, setAxisToTop] = useState("");
-            const [cgToAxis, setCgToAxis] = useState("");
+            // 抗加速度參數：輸入暫存值
+            const [inputLcdWeight, setInputLcdWeight] = useState("");
+            const [inputAxisToTop, setInputAxisToTop] = useState("");
+            const [inputCgToAxis, setInputCgToAxis] = useState("");
+
+            // 抗加速度參數：實際計算值 (點擊計算後更新)
+            const [calcParams, setCalcParams] = useState({
+                lcdWeight: "",
+                axisToTop: "",
+                cgToAxis: ""
+            });
 
             // 圖表 X 軸範圍設定 (預設值)
             const [chartRanges, setChartRanges] = useState({
@@ -208,6 +216,15 @@
                 }));
             };
 
+            // 觸發計算
+            const handleCalculate = () => {
+                setCalcParams({
+                    lcdWeight: inputLcdWeight,
+                    axisToTop: inputAxisToTop,
+                    cgToAxis: inputCgToAxis
+                });
+            };
+
             // 處理檔案上傳
             const handleFileUpload = (file) => {
                 const reader = new FileReader();
@@ -216,12 +233,24 @@
                     const workbook = XLSX.read(data, { type: 'array' });
                     const firstSheetName = workbook.SheetNames[0];
                     const worksheet = workbook.Sheets[firstSheetName];
+                    // 讀取所有資料
                     const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
                     
                     if (jsonData.length > 0) {
-                        setHeaders(jsonData[0]);
-                        setRawData(jsonData.slice(1));
+                        setHeaders(jsonData[0]); // 第一列為標題
+                        setRawData(jsonData.slice(1)); // 第二列開始為數據
                         setFileName(file.name);
+
+                        // --- 修正邏輯：自動抓取 I2 (Row 2, Col I) ---
+                        // Row 2 在 jsonData 的 index 為 1
+                        // Column I 在 Excel 是第 9 欄，index 為 8
+                        if (jsonData.length > 1) {
+                            const valI2 = jsonData[1][8];
+                            const parsedI2 = parseFloat(valI2);
+                            if (!isNaN(parsedI2)) {
+                                setBaseAngle(parsedI2);
+                            }
+                        }
                     }
                 };
                 reader.readAsArrayBuffer(file);
@@ -390,16 +419,8 @@
                             if (validPeaks.length > 0) {
                                 // 取第一個 (角度最小的) 顯著峰值
                                 maxClampForce = validPeaks[0].y;
-                            } else {
-                                // Fallback: 區間最大值
-                                if (clampingRangeGo.length > 0) {
-                                    let currentMax = -Infinity;
-                                    clampingRangeGo.forEach(p => {
-                                        if (p.y > currentMax) currentMax = p.y;
-                                    });
-                                    if (currentMax !== -Infinity) maxClampForce = currentMax;
-                                }
-                            }
+                            } 
+                            // 若無峰值，maxClampForce 保持為 null，不使用 fallback
 
                             // 3. LCD 開 90˚度數值 (g) - 開啟去程
                             let forceAt90 = findForceAtAngle(goData, 90);
@@ -431,10 +452,11 @@
                             let forceAt130 = findForceAtAngle(goData, 130);
                             let antiAcceleration = "-";
 
-                            if (forceAt130 !== "-" && lcdWeight && axisToTop && cgToAxis) {
-                                const w = parseFloat(lcdWeight);
-                                const att = parseFloat(axisToTop);
-                                const cga = parseFloat(cgToAxis);
+                            // 使用 calcParams 而非直接 input state
+                            if (forceAt130 !== "-" && calcParams.lcdWeight && calcParams.axisToTop && calcParams.cgToAxis) {
+                                const w = parseFloat(calcParams.lcdWeight);
+                                const att = parseFloat(calcParams.axisToTop);
+                                const cga = parseFloat(calcParams.cgToAxis);
                                 const f130 = parseFloat(forceAt130);
 
                                 if (!isNaN(w) && !isNaN(att) && !isNaN(cga) && !isNaN(f130)) {
@@ -606,7 +628,7 @@
                     closing30: closing30Sets
                 });
 
-            }, [processedData, headers, lcdWeight, axisToTop, cgToAxis]); // Add dependencies
+            }, [processedData, headers, baseAngle, calcParams]); // Updated dependencies
 
             // 匯出 Excel
             const handleExport = () => {
@@ -667,11 +689,11 @@
                         </div>
                     </header>
 
-                    {/* 主要內容 Grid */}
-                    <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                    {/* 主要內容 Flex 佈局 (0.5 : 1.2 : 4) */}
+                    <div className="flex flex-col md:flex-row gap-6">
                         
-                        {/* 左側：上傳與控制 與 分析結果 (佔 1/4) */}
-                        <div className="lg:col-span-1 space-y-4">
+                        {/* 1. 左側 (0.5等份): 輸入與設定 */}
+                        <div className="w-full md:flex-[0.5] space-y-4 min-w-[200px]">
                             
                             {/* 上傳區 */}
                             <div 
@@ -690,7 +712,7 @@
                                 </div>
                             </div>
 
-                            {/* 抗加速度參數設定 */}
+                            {/* 抗加速度參數設定 (含計算按鈕) */}
                             <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200">
                                 <h4 className="font-bold text-gray-700 mb-3 flex items-center">
                                     <IconSettings /> 抗加速度參數設定
@@ -700,8 +722,8 @@
                                         <label className="block text-gray-500 mb-1">LCD 重量 (g)</label>
                                         <input 
                                             type="number" 
-                                            value={lcdWeight}
-                                            onChange={(e) => setLcdWeight(e.target.value)}
+                                            value={inputLcdWeight}
+                                            onChange={(e) => setInputLcdWeight(e.target.value)}
                                             className="w-full border border-gray-300 rounded px-2 py-1"
                                             placeholder="輸入重量..."
                                         />
@@ -710,8 +732,8 @@
                                         <label className="block text-gray-500 mb-1">軸心 to 天側 (mm)</label>
                                         <input 
                                             type="number" 
-                                            value={axisToTop}
-                                            onChange={(e) => setAxisToTop(e.target.value)}
+                                            value={inputAxisToTop}
+                                            onChange={(e) => setInputAxisToTop(e.target.value)}
                                             className="w-full border border-gray-300 rounded px-2 py-1"
                                             placeholder="輸入距離..."
                                         />
@@ -720,29 +742,22 @@
                                         <label className="block text-gray-500 mb-1">LCD重心 to 軸心 (mm)</label>
                                         <input 
                                             type="number" 
-                                            value={cgToAxis}
-                                            onChange={(e) => setCgToAxis(e.target.value)}
+                                            value={inputCgToAxis}
+                                            onChange={(e) => setInputCgToAxis(e.target.value)}
                                             className="w-full border border-gray-300 rounded px-2 py-1"
                                             placeholder="輸入距離..."
                                         />
                                     </div>
+                                    <button 
+                                        onClick={handleCalculate}
+                                        className="w-full mt-3 bg-indigo-600 hover:bg-indigo-700 text-white py-1.5 rounded flex items-center justify-center gap-2 transition-colors"
+                                    >
+                                        <IconCalculator className="w-4 h-4" /> 計算
+                                    </button>
                                 </div>
                             </div>
 
-                            {/* 已移除左側的「圖表 X 軸範圍設定」區塊 */}
-
-                            <button 
-                                onClick={handleExport}
-                                disabled={processedData.length === 0}
-                                className={`w-full flex items-center justify-center py-2 px-4 rounded-lg font-medium text-white transition-colors shadow-sm
-                                    ${processedData.length > 0 ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-300 cursor-not-allowed'}
-                                `}
-                            >
-                                <IconDownload />
-                                下載 xlsx 檔
-                            </button>
-                            
-                            {/* 基準角度設定 - 移動到分析結果上方 */}
+                            {/* 基準角度設定 - 移動到此處 */}
                             <div className="bg-white px-4 py-3 rounded-xl border border-gray-200 shadow-sm flex items-center justify-between">
                                 <div className="flex items-center gap-2">
                                     <IconCompass className="text-gray-600" />
@@ -760,17 +775,30 @@
                                 </div>
                             </div>
 
+                            <button 
+                                onClick={handleExport}
+                                disabled={processedData.length === 0}
+                                className={`w-full flex items-center justify-center py-2 px-4 rounded-lg font-medium text-white transition-colors shadow-sm
+                                    ${processedData.length > 0 ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-300 cursor-not-allowed'}
+                                `}
+                            >
+                                <IconDownload />
+                                下載 xlsx 檔
+                            </button>
+                        </div>
+
+                        {/* 2. 中間 (1.2等份): 分析結果 (移除 Scrollbar) */}
+                        <div className="w-full md:flex-[1.2] space-y-4 min-w-[250px]">
                             {/* 分析結果顯示區 */}
                             {reportTable.stats.length > 0 && (
-                                <div className="bg-white rounded-xl shadow-sm border border-orange-200 overflow-hidden mt-2">
+                                <div className="bg-white rounded-xl shadow-sm border border-orange-200 overflow-hidden">
                                     <div className="bg-orange-50 px-4 py-3 border-b border-orange-100 flex items-center">
                                         <IconActivity className="w-5 h-5 text-orange-600 mr-2" />
                                         <h3 className="font-bold text-orange-800">分析結果</h3>
                                     </div>
-                                    <div className="p-3 space-y-3 max-h-[600px] overflow-y-auto">
+                                    <div className="p-3 space-y-3">
                                         {reportTable.stats.map((stat, idx) => (
                                             <div key={idx} className="stat-card bg-white border border-gray-100 rounded-lg p-3 shadow-sm relative">
-                                                
                                                 {/* 核心數據 */}
                                                 <div className="space-y-2 mb-3 mt-2">
                                                     <div className="flex justify-between items-center text-[15px]">
@@ -836,20 +864,16 @@
                                             </div>
                                         ))}
                                     </div>
-                                </div>
-                            )}
-
-                             {processedData.length > 0 && (
-                                <div className="bg-blue-50 p-3 rounded-lg border border-blue-100 text-xs text-blue-800">
-                                    <p>總筆數: {processedData.length}</p>
-                                    <p>圖表顯示: Curve 5 & 6</p>
-                                    <p>統計/報表: 僅 Curve 5</p>
+                                    {/* 總筆數顯示於分析結果最下方 */}
+                                    <div className="px-4 py-2 bg-gray-50 border-t border-gray-100 text-xs text-gray-500 text-right">
+                                        總筆數: {processedData.length}
+                                    </div>
                                 </div>
                             )}
                         </div>
 
-                        {/* 右側：2x2 圖表區 (佔 3/4) */}
-                        <div className="lg:col-span-3">
+                        {/* 3. 右側 (4等份): 分析圖表 */}
+                        <div className="w-full md:flex-[4] min-w-[300px]">
                             <h2 className="text-lg font-bold text-gray-800 mb-3 flex items-center gap-2">
                                 <IconGrid /> 分析圖表 (自動生成)
                             </h2>
